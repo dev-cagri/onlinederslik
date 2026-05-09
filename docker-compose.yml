@@ -1,0 +1,50 @@
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml
+    depends_on:
+      - redis
+
+  # LiveKit Egress — kayıt için headless Chrome + ffmpeg.
+  # En düşük MB için H.264/AAC encoding backend/src/routes/recording.js'de set ediliyor.
+  egress:
+    image: livekit/egress:latest
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - SYS_ADMIN  # headless Chrome için gerekli
+    volumes:
+      - ./egress.yaml:/etc/egress.yaml
+      - ./backend/recordings:/out
+    environment:
+      EGRESS_CONFIG_FILE: /etc/egress.yaml
+    depends_on:
+      - redis
+      - livekit
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  mysql:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MARIADB_DATABASE: ${MYSQL_DATABASE:-zoomtr}
+      MARIADB_USER: ${MYSQL_USER:-zoomtr}
+      MARIADB_PASSWORD: ${MYSQL_PASSWORD:-zoomtrpass}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+
+volumes:
+  mysql_data:

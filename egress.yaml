@@ -1,0 +1,32 @@
+# LiveKit Egress konfig — Online Derslik kayıt servisi
+#
+# Kullanım:
+#   docker run --rm --network host \
+#     -v $(pwd)/egress.yaml:/etc/egress.yaml \
+#     -v $(pwd)/backend/recordings:/out \
+#     livekit/egress --config /etc/egress.yaml
+#
+# Production (systemd / docker-compose) için aynı config'i kullan,
+# sadece file_output_dir'i sunucudaki kalıcı volume'a eşle.
+
+api_key: prodkey
+api_secret: secretdevkeyforlocaluseonly1234567890
+ws_url: ws://localhost:7880
+
+# Backend'in writeable görebileceği yol; backend recordings dizini ile aynı olmalı.
+# Container içindeyken /out, host'ta backend/recordings/ olarak mount edilir.
+file_output_dir: /out
+
+redis:
+  address: localhost:6379
+
+# Egress webhook'u Online Derslik backend'ine push'lar — kayıt bittiğinde
+# DB'deki recording satırını otomatik günceller (size, duration, status).
+webhook_url: http://localhost:4000/api/livekit/webhook
+
+# Performans
+cpu_cost:
+  room_composite_cpu_cost: 3.0
+  audio_room_composite_cpu_cost: 0.5
+  track_composite_cpu_cost: 1.5
+  track_cpu_cost: 0.5
