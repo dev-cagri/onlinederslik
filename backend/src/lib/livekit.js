@@ -56,7 +56,7 @@ export async function issueToken({
   if (sources) grant.canPublishSources = sources;
 
   at.addGrant(grant);
-  return { token: await at.toJwt(), url: config.livekit.url };
+  return { token: await at.toJwt(), url: config.livekit.publicUrl };
 }
 
 // Belirli bir katılımcının LiveKit metadata'sından host olup olmadığını oku.

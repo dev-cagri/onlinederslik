@@ -145,4 +145,24 @@ export const Icon = {
       <line x1="15" y1="9" x2="15.01" y2="9" />
     </svg>
   ),
+  Shield: (p) => <svg {...base} {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>,
+  IdCard: (p) => (
+    <svg {...base} {...p}>
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <circle cx="8" cy="12" r="2" />
+      <path d="M14 10h4M14 14h4" />
+    </svg>
+  ),
+  Phone: (p) => (
+    <svg {...base} {...p}>
+      <rect x="5" y="2" width="14" height="20" rx="2" />
+      <path d="M12 18h.01" />
+    </svg>
+  ),
+  MapPin: (p) => (
+    <svg {...base} {...p}>
+      <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0116 0z" />
+      <circle cx="12" cy="10" r="3" />
+    </svg>
+  ),
 };

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 
-export function LobbyWaiting({ roomId, displayName, password, onApproved, onRejected }) {
+export function LobbyWaiting({ roomId, verificationId, password, onApproved, onRejected }) {
   const [status, setStatus] = useState('connecting');
   const [errorMsg, setErrorMsg] = useState(null);
   const socketRef = useRef(null);
@@ -12,22 +12,23 @@ export function LobbyWaiting({ roomId, displayName, password, onApproved, onReje
 
     socket.on('connect', () => {
       setStatus('waiting');
-      socket.emit('lobby:request', { roomId, name: displayName, password }, (ack) => {
+      socket.emit('lobby:request', { roomId, verificationId, password }, (ack) => {
         if (!ack?.ok) {
           if (ack?.error === 'password') return onRejected?.('Parola yanlış');
           if (ack?.error === 'no_lobby') return onRejected?.('Bu odada bekleme odası yok');
           if (ack?.error === 'not_found') return onRejected?.('Oda bulunamadı');
+          if (ack?.error === 'verification_required') return onRejected?.('Kimlik doğrulaması tamamlanmamış');
           return onRejected?.('Bekleme odasına alınamadı');
         }
       });
     });
 
-    socket.on('lobby:approved', ({ token, url }) => onApproved?.({ token, url }));
+    socket.on('lobby:approved', ({ token, url, displayName }) => onApproved?.({ token, url, displayName }));
     socket.on('lobby:rejected', ({ reason }) => onRejected?.(reason || 'Host isteğinizi reddetti'));
     socket.on('connect_error', (err) => setErrorMsg(err.message));
 
     return () => socket.disconnect();
-  }, [roomId, displayName, password]);
+  }, [roomId, verificationId, password]);
 
   return (
     <div className="centered-screen">

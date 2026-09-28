@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import { TrackSource } from 'livekit-server-sdk';
 import { pool } from '../db/pool.js';
 import { roomService, buildSourcesFor, isParticipantHost } from '../lib/livekit.js';
+import { requireAdmin } from '../lib/auth.js';
 
 const MIC_VALUES = new Set([TrackSource.MICROPHONE, 2, 'microphone', 'MICROPHONE']);
 const CAM_VALUES = new Set([TrackSource.CAMERA, 1, 'camera', 'CAMERA']);
@@ -20,16 +21,17 @@ export function buildRoomsRouter(io) {
 
   // --- Oda oluşturma & bilgi ---
 
-  router.post('/', async (req, res) => {
-    const name = (req.body?.name || 'Yeni Toplantı').toString().slice(0, 255);
+  // Oda yalnızca giriş yapmış yönetici tarafından açılabilir
+  router.post('/', requireAdmin, async (req, res) => {
+    const name = (req.body?.name || `${req.admin.name} - Ders`).toString().slice(0, 255);
     const password = req.body?.password ? req.body.password.toString().slice(0, 120) : null;
     const lobbyEnabled = req.body?.lobbyEnabled ? 1 : 0;
     const id = nanoid(10);
     const hostToken = nanoid(32);
 
     await pool.query(
-      'INSERT INTO rooms (id, name, host_token, password, lobby_enabled) VALUES (?, ?, ?, ?, ?)',
-      [id, name, hostToken, password, lobbyEnabled]
+      'INSERT INTO rooms (id, name, host_token, password, lobby_enabled, created_by) VALUES (?, ?, ?, ?, ?, ?)',
+      [id, name, hostToken, password, lobbyEnabled, req.admin.id]
     );
 
     res.json({ id, name, hostToken, hasPassword: !!password, lobbyEnabled: !!lobbyEnabled });

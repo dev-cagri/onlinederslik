@@ -29,6 +29,7 @@ import { ChatPanel } from '../components/ChatPanel.jsx';
 import { ParticipantList } from '../components/ParticipantList.jsx';
 import { SettingsPanel } from '../components/SettingsPanel.jsx';
 import { LobbyWaiting } from '../components/LobbyWaiting.jsx';
+import { VerificationFlow, verificationKey } from '../components/VerificationFlow.jsx';
 import { TopBar } from '../components/TopBar.jsx';
 import { Icon } from '../components/icons.jsx';
 import { MeetingStage } from '../components/MeetingStage.jsx';
@@ -45,6 +46,7 @@ export function Room() {
   const [nameInput, setNameInput] = useState('');
   const [password, setPassword] = useState(() => sessionStorage.getItem(`zoomtr:pwd:${roomId}`) || '');
   const [pwInput, setPwInput] = useState('');
+  const [verificationId, setVerificationId] = useState(() => sessionStorage.getItem(verificationKey(roomId)));
   const [token, setToken] = useState(null);
   const [serverUrl, setServerUrl] = useState(null);
   const [isHost, setIsHost] = useState(false);
@@ -56,9 +58,10 @@ export function Room() {
     getRoom(roomId)
       .then((room) => {
         setRoomMeta(room);
-        if (!displayName) setStep('ask-name');
-        else if (room.hasPassword && !password && !hostToken) setStep('ask-password');
-        else setStep('connecting');
+        // Host doğrudan girer; katılımcılar parola (varsa) → kimlik doğrulaması → bağlantı
+        if (hostToken) setStep(displayName ? 'connecting' : 'ask-name');
+        else if (room.hasPassword && !password) setStep('ask-password');
+        else setStep(verificationId ? 'connecting' : 'verify');
       })
       .catch((e) => {
         setErrorMsg(e.message);
@@ -69,12 +72,24 @@ export function Room() {
   useEffect(() => {
     if (step !== 'connecting') return;
     let cancelled = false;
-    requestToken({ roomId, displayName, hostToken: hostToken || undefined, password: password || undefined })
+    requestToken({
+      roomId,
+      displayName,
+      hostToken: hostToken || undefined,
+      password: password || undefined,
+      verificationId: verificationId || undefined,
+    })
       .then((res) => {
         if (cancelled) return;
         if (res.needPassword) {
           setStep('ask-password');
           setErrorMsg('Parola gerekli veya yanlış');
+          return;
+        }
+        if (res.needVerification) {
+          sessionStorage.removeItem(verificationKey(roomId));
+          setVerificationId(null);
+          setStep('verify');
           return;
         }
         if (res.lobby) {
@@ -84,6 +99,7 @@ export function Room() {
         setToken(res.token);
         setServerUrl(res.url);
         setIsHost(!!res.isHost);
+        if (res.displayName) setDisplayName(res.displayName);
         setStep('connected');
       })
       .catch((e) => {
@@ -91,7 +107,7 @@ export function Room() {
         setStep('error');
       });
     return () => { cancelled = true; };
-  }, [step, roomId, displayName, password, hostToken]);
+  }, [step, roomId, displayName, password, hostToken, verificationId]);
 
   if (step === 'error') {
     return (
@@ -180,7 +196,7 @@ export function Room() {
                 sessionStorage.setItem(`zoomtr:pwd:${roomId}`, t);
                 setPassword(t);
                 setErrorMsg(null);
-                setStep('connecting');
+                setStep(verificationId ? 'connecting' : 'verify');
               }}
             >
               <Icon.Lock /> Gir
@@ -192,17 +208,41 @@ export function Room() {
     );
   }
 
+  if (step === 'verify') {
+    return (
+      <>
+        <TopBar />
+        <VerificationFlow
+          roomId={roomId}
+          roomName={roomMeta?.name}
+          password={password}
+          onComplete={(vid) => {
+            setVerificationId(vid);
+            setStep('connecting');
+          }}
+          onPasswordRequired={() => {
+            sessionStorage.removeItem(`zoomtr:pwd:${roomId}`);
+            setPassword('');
+            setErrorMsg('Parola gerekli veya yanlış');
+            setStep('ask-password');
+          }}
+        />
+      </>
+    );
+  }
+
   if (step === 'lobby-waiting') {
     return (
       <>
         <TopBar />
         <LobbyWaiting
           roomId={roomId}
-          displayName={displayName}
+          verificationId={verificationId}
           password={password}
-          onApproved={({ token, url }) => {
+          onApproved={({ token, url, displayName: verifiedName }) => {
             setToken(token);
             setServerUrl(url);
+            if (verifiedName) setDisplayName(verifiedName);
             setIsHost(false);
             setStep('connected');
           }}
@@ -355,6 +395,14 @@ function RoomLayout({ roomId, displayName, roomName, isHost, hostToken, onLeave 
         try { recorderRef.current.stop(); } catch {}
       }
     };
+  }, []);
+
+  // Derslik açıkken sayfa viewport'a sabitlenir; belge scroll olmaz,
+  // sadece sohbet/katılımcı/ayar listeleri kendi içinde kayar.
+  useEffect(() => {
+    const html = document.documentElement;
+    html.classList.add('room-locked');
+    return () => html.classList.remove('room-locked');
   }, []);
 
   function openPanel(targetTab) {

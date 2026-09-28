@@ -2,8 +2,9 @@ import { nanoid } from 'nanoid';
 import { pool } from '../db/pool.js';
 import { issueToken } from '../lib/livekit.js';
 import { getCurrentShare } from '../routes/share.js';
+import { findCompletedVerification, markVerificationJoined } from '../lib/verification.js';
 
-// pending[roomId] = Map<requestId, { name, socketId }>
+// pending[roomId] = Map<requestId, { name, socketId, verificationId }>
 const pending = new Map();
 // hostsByRoom[roomId] = Set<socketId>
 const hostsByRoom = new Map();
@@ -64,7 +65,7 @@ export function attachLobby(socket, io) {
   });
 
   // Katılımcı lobby'ye düşer.
-  socket.on('lobby:request', async ({ roomId, name, password }, ack) => {
+  socket.on('lobby:request', async ({ roomId, password, verificationId }, ack) => {
     try {
       const room = await loadRoom(roomId);
       if (!room) return ack?.({ ok: false, error: 'not_found' });
@@ -72,11 +73,18 @@ export function attachLobby(socket, io) {
       if (room.password && password !== room.password) {
         return ack?.({ ok: false, error: 'password' });
       }
-      const cleanName = (name || '').toString().slice(0, 60).trim();
-      if (!cleanName) return ack?.({ ok: false, error: 'name_required' });
+      // Bekleme odasına da yalnız doğrulamasını tamamlamış katılımcı girer;
+      // host'a görünen ad doğrulanmış kimlikten gelir.
+      const verification = await findCompletedVerification(roomId, verificationId);
+      if (!verification) return ack?.({ ok: false, error: 'verification_required' });
+      const cleanName = verification.displayName.slice(0, 60);
 
       const requestId = nanoid(12);
-      pendingFor(roomId).set(requestId, { name: cleanName, socketId: socket.id });
+      pendingFor(roomId).set(requestId, {
+        name: cleanName,
+        socketId: socket.id,
+        verificationId: verification.id,
+      });
       socket.data.lobbyEntries.push({ roomId, requestId });
 
       io.to(`host:${roomId}`).emit('lobby:pending', { requestId, name: cleanName });
@@ -104,7 +112,8 @@ export function attachLobby(socket, io) {
         hostOnlyVideo: !!room?.host_only_video,
         allowScreenShare: !!room?.allow_screen_share,
       });
-      io.to(entry.socketId).emit('lobby:approved', { token, url });
+      io.to(entry.socketId).emit('lobby:approved', { token, url, displayName: entry.name });
+      await markVerificationJoined(entry.verificationId);
       map.delete(requestId);
       io.to(`host:${roomId}`).emit('lobby:resolved', { requestId });
       ack?.({ ok: true });

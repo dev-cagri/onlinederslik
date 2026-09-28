@@ -34,13 +34,15 @@ export async function getMessages(id) {
 //   200 → { token, url, isHost }
 //   202 → { lobby: true } (lobby socket akışı)
 //   401 → { needPassword: true }
-export async function requestToken({ roomId, displayName, hostToken, password }) {
+//   403 → { needVerification: true } (KVKK/TC/SMS/konum doğrulaması eksik)
+export async function requestToken({ roomId, displayName, hostToken, password, verificationId }) {
   const r = await fetch('/api/tokens', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ roomId, displayName, hostToken, password }),
+    body: JSON.stringify({ roomId, displayName, hostToken, password, verificationId }),
   });
   if (r.status === 401) return { needPassword: true };
+  if (r.status === 403) return { needVerification: true };
   if (r.status === 202) return { lobby: true };
   if (!r.ok) {
     const data = await r.json().catch(() => ({}));
@@ -118,4 +120,63 @@ export async function getActiveRecording(roomId) {
 export async function listRecordings(roomId) {
   const { data } = await jsonFetch(`/api/rooms/${roomId}/recordings`);
   return data;
+}
+
+// === Katılımcı doğrulaması (KVKK → kimlik → SMS OTP → konum) ===
+function verificationPost(roomId, path, body) {
+  return jsonFetch(`/api/rooms/${roomId}/verification${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then((r) => r.data);
+}
+
+export function startVerification(roomId, { kvkkVersion, password }) {
+  return verificationPost(roomId, '', { kvkkAccepted: true, kvkkVersion, password });
+}
+export async function getVerification(roomId, vid) {
+  const { data } = await jsonFetch(`/api/rooms/${roomId}/verification/${vid}`);
+  return data;
+}
+export function submitIdentity(roomId, vid, { firstName, lastName, tcNo }) {
+  return verificationPost(roomId, `/${vid}/identity`, { firstName, lastName, tcNo });
+}
+export function sendOtp(roomId, vid, { dialCode, phone }) {
+  return verificationPost(roomId, `/${vid}/otp`, { dialCode, phone });
+}
+export function verifyOtp(roomId, vid, code) {
+  return verificationPost(roomId, `/${vid}/otp/verify`, { code });
+}
+export function submitLocation(roomId, vid, { latitude, longitude, accuracy }) {
+  return verificationPost(roomId, `/${vid}/location`, { latitude, longitude, accuracy });
+}
+
+// === Yönetici (oturum HttpOnly çerezde; aynı origin'de fetch çerezi kendisi gönderir) ===
+function adminPost(path, body) {
+  return jsonFetch(`/api/admin${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  }).then((r) => r.data);
+}
+
+export const adminLogin = (email, password) => adminPost('/login', { email, password });
+export const adminLogout = () => adminPost('/logout');
+export const adminChangePassword = (currentPassword, newPassword) =>
+  adminPost('/password', { currentPassword, newPassword });
+
+// Oturum yoksa null döner (401 hata sayılmaz)
+export async function adminMe() {
+  try {
+    return (await jsonFetch('/api/admin/me')).data;
+  } catch (err) {
+    if (err.status === 401) return null;
+    throw err;
+  }
+}
+export async function adminRooms() {
+  return (await jsonFetch('/api/admin/rooms')).data;
+}
+export async function adminParticipants(roomId) {
+  return (await jsonFetch(`/api/admin/rooms/${roomId}/participants`)).data;
 }

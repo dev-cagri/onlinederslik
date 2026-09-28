@@ -7,9 +7,13 @@ import { buildRoomsRouter } from './routes/rooms.js';
 import { tokensRouter } from './routes/tokens.js';
 import { buildShareRouter, UPLOADS_DIR } from './routes/share.js';
 import { buildRecordingRouter, handleEgressWebhook } from './routes/recording.js';
+import { buildVerificationRouter } from './routes/verification.js';
+import { buildAdminRouter } from './routes/admin.js';
 import { attachSocketHandlers } from './socket/index.js';
+import { startRetentionJob } from './lib/retention.js';
 
 const app = express();
+app.set('trust proxy', config.trustProxy);
 app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(express.json());
 
@@ -21,10 +25,12 @@ const io = new IOServer(server, {
   cors: { origin: config.corsOrigin, credentials: true },
   maxHttpBufferSize: 1e7,
 });
+app.use('/api/admin', buildAdminRouter());
 app.use('/api/rooms', buildRoomsRouter(io));
 app.use('/api/tokens', tokensRouter);
 app.use('/api/rooms/:id/share', buildShareRouter(io));
 app.use('/api/rooms/:id/recordings', buildRecordingRouter(io));
+app.use('/api/rooms/:id/verification', buildVerificationRouter());
 
 // LiveKit Egress webhook — text/webhook+json olarak gelir; raw body kullan
 app.post('/api/livekit/webhook', express.raw({ type: '*/*' }), async (req, res) => {
@@ -43,4 +49,5 @@ app.use((err, _req, res, _next) => {
 
 server.listen(config.port, () => {
   console.log(`Online Derslik backend ${config.port} portunda dinliyor`);
+  startRetentionJob();
 });
