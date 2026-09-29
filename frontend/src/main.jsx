@@ -16,6 +16,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/room/:roomId" element={<Room />} />
         <Route path="/admin/login" element={<AdminLogin />} />
         <Route path="/admin" element={<AdminPanel />} />
+        <Route path="/admin/:section" element={<AdminPanel />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParticipants } from '@livekit/components-react';
 import { hostAction } from '../lib/api.js';
 import { Icon } from './icons.jsx';
+import { useToast } from './Toasts.jsx';
 
 function displayNameFor(p) {
   if (p.name && p.name.trim()) return p.name.trim();
@@ -43,9 +44,28 @@ function useParticipantTrackState(participant) {
   };
 }
 
+function metaOf(p) {
+  try { return JSON.parse(p.metadata || '{}'); } catch { return {}; }
+}
+
 function ParticipantRow({ p, isHost, roomId, hostToken }) {
   const { micEnabled, camEnabled } = useParticipantTrackState(p);
+  const toast = useToast();
   const name = displayNameFor(p);
+  const meta = metaOf(p);
+
+  const [choosing, setChoosing] = useState(false);
+
+  // scope 'room' → yalnız bu toplantı; 'all' → tüm toplantılar (yönetim panelinden kaldırılır)
+  async function promote(scope) {
+    setChoosing(false);
+    try {
+      await hostAction(roomId, 'promote', { hostToken, identity: p.identity, scope });
+      toast(scope === 'all' ? `${name} artık tüm toplantıların yöneticisi` : `${name} artık bu toplantının yöneticisi`, { tone: 'success' });
+    } catch (err) {
+      toast(err.message, { tone: 'warning' });
+    }
+  }
 
   async function setMute(source, currentlyOn) {
     try {
@@ -56,18 +76,20 @@ function ParticipantRow({ p, isHost, roomId, hostToken }) {
   }
 
   async function kick() {
-    if (!confirm(`${name} odadan çıkarılsın mı?`)) return;
+    if (!confirm(`${name} toplantıdan çıkarılsın mı?`)) return;
     try {
       await hostAction(roomId, 'kick', { hostToken, identity: p.identity });
     } catch { /* yoksay */ }
   }
 
   return (
+    <div className="participant-block">
     <div className="item">
       <div className="avatar">{initialsFor(name)}</div>
       <div className="name" title={name}>
         {name}
         {p.isLocal && <span className="you"> (siz)</span>}
+        {meta.isHost && <span className="participant-role">Yönetici</span>}
       </div>
       {isHost && !p.isLocal && (
         <div className="actions">
@@ -85,11 +107,31 @@ function ParticipantRow({ p, isHost, roomId, hostToken }) {
           >
             {camEnabled ? <Icon.Video /> : <Icon.VideoOff />}
           </button>
-          <button className="icon-btn danger" title="Odadan çıkar" onClick={kick}>
+          {meta.memberId && !meta.isHost && (
+            <button className={`icon-btn ${choosing ? 'active' : ''}`} title="Toplantı yöneticisi yap"
+              aria-label={`${name} toplantı yöneticisi yap`} aria-expanded={choosing} onClick={() => setChoosing((v) => !v)}>
+              <Icon.Shield />
+            </button>
+          )}
+          <button className="icon-btn danger" title="Toplantıdan çıkar" onClick={kick}>
             <Icon.Logout />
           </button>
         </div>
       )}
+    </div>
+    {choosing && (
+      <div className="promote-choice" role="group" aria-label={`${name} için yönetici yetkisi`}>
+        <button type="button" onClick={() => promote('room')}>
+          <strong>Bu toplantıda yönetici yap</strong>
+          <span>Yalnız bu toplantıda host yetkisi alır</span>
+        </button>
+        <button type="button" onClick={() => promote('all')}>
+          <strong>Tüm toplantılarda yönetici yap</strong>
+          <span>Sonraki toplantılara da host girer; yönetim panelinden kaldırılır</span>
+        </button>
+        <button type="button" className="promote-cancel" onClick={() => setChoosing(false)}>Vazgeç</button>
+      </div>
+    )}
     </div>
   );
 }

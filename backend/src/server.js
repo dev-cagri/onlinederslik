@@ -6,8 +6,9 @@ import { config } from './config.js';
 import { buildRoomsRouter } from './routes/rooms.js';
 import { tokensRouter } from './routes/tokens.js';
 import { buildShareRouter, UPLOADS_DIR } from './routes/share.js';
-import { buildRecordingRouter, handleEgressWebhook } from './routes/recording.js';
-import { buildVerificationRouter } from './routes/verification.js';
+import { buildRecordingRouter } from './routes/recording.js';
+import { buildMemberRouter } from './routes/member.js';
+import { buildBrandingRouter } from './routes/branding.js';
 import { buildAdminRouter } from './routes/admin.js';
 import { attachSocketHandlers } from './socket/index.js';
 import { startRetentionJob } from './lib/retention.js';
@@ -18,7 +19,11 @@ app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(express.json());
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
-app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '1h' }));
+// nosniff: yüklenen dosya uzantısındaki türden başka bir şey (ör. HTML) olarak yorumlanmasın
+app.use('/uploads', express.static(UPLOADS_DIR, {
+  maxAge: '1h',
+  setHeaders: (res) => res.setHeader('X-Content-Type-Options', 'nosniff'),
+}));
 
 const server = http.createServer(app);
 const io = new IOServer(server, {
@@ -26,20 +31,15 @@ const io = new IOServer(server, {
   maxHttpBufferSize: 1e7,
 });
 app.use('/api/admin', buildAdminRouter());
+app.use('/api/member', buildMemberRouter());
+app.use('/api/branding', buildBrandingRouter());
 app.use('/api/rooms', buildRoomsRouter(io));
 app.use('/api/tokens', tokensRouter);
 app.use('/api/rooms/:id/share', buildShareRouter(io));
 app.use('/api/rooms/:id/recordings', buildRecordingRouter(io));
-app.use('/api/rooms/:id/verification', buildVerificationRouter());
 
-// LiveKit Egress webhook — text/webhook+json olarak gelir; raw body kullan
-app.post('/api/livekit/webhook', express.raw({ type: '*/*' }), async (req, res) => {
-  try {
-    const payload = JSON.parse(req.body.toString('utf-8'));
-    await handleEgressWebhook(payload, io);
-  } catch { /* yoksay */ }
-  res.json({ ok: true });
-});
+// Not: kayıt durumu Egress'ten düzenli sorgulanır (routes/recording.js syncRecordings);
+// doğrulamasız webhook ucu bilinçli olarak yok.
 attachSocketHandlers(io);
 
 app.use((err, _req, res, _next) => {

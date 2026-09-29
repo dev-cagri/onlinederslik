@@ -146,23 +146,59 @@ export const Icon = {
     </svg>
   ),
   Shield: (p) => <svg {...base} {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>,
-  IdCard: (p) => (
+  ChevronLeft: (p) => <svg {...base} {...p}><polyline points="15 18 9 12 15 6" /></svg>,
+  Key: (p) => (
     <svg {...base} {...p}>
-      <rect x="2" y="5" width="20" height="14" rx="2" />
-      <circle cx="8" cy="12" r="2" />
-      <path d="M14 10h4M14 14h4" />
+      <circle cx="7.5" cy="15.5" r="4.5" />
+      <path d="M10.7 12.3 21 2M16 7l3 3M18.5 4.5l2 2" />
+    </svg>
+  ),
+  User: (p) => (
+    <svg {...base} {...p}>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21v-1a6 6 0 016-6h4a6 6 0 016 6v1" />
+    </svg>
+  ),
+  Play: (p) => <svg {...base} {...p}><polygon points="7 4 20 12 7 20 7 4" fill="currentColor" /></svg>,
+  Download: (p) => (
+    <svg {...base} {...p}>
+      <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />
+    </svg>
+  ),
+  Screen: (p) => (
+    <svg {...base} {...p}>
+      <rect x="2" y="4" width="20" height="13" rx="2" />
+      <path d="M8 21h8M12 17v4M12 13V8M9.5 10.5 12 8l2.5 2.5" />
+    </svg>
+  ),
+  More: (p) => (
+    <svg {...base} {...p}>
+      <circle cx="5" cy="12" r="1.2" fill="currentColor" />
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" />
+      <circle cx="19" cy="12" r="1.2" fill="currentColor" />
+    </svg>
+  ),
+  Record: (p) => (
+    <svg {...base} {...p}>
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="4" fill="currentColor" />
+    </svg>
+  ),
+  Settings: (p) => (
+    <svg {...base} {...p}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z" />
+    </svg>
+  ),
+  Trash: (p) => (
+    <svg {...base} {...p}>
+      <path d="M3 6h18M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
     </svg>
   ),
   Phone: (p) => (
     <svg {...base} {...p}>
       <rect x="5" y="2" width="14" height="20" rx="2" />
       <path d="M12 18h.01" />
-    </svg>
-  ),
-  MapPin: (p) => (
-    <svg {...base} {...p}>
-      <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0116 0z" />
-      <circle cx="12" cy="10" r="3" />
     </svg>
   ),
 };

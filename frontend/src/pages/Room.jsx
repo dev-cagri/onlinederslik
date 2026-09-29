@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { LiveKitRoom } from '@livekit/components-react';
-import { VideoPresets } from 'livekit-client';
+import { LiveKitRoom, useParticipants, useRoomContext } from '@livekit/components-react';
+import { VideoPresets, RoomEvent, DisconnectReason } from 'livekit-client';
+import { ToastProvider, useToast } from '../components/Toasts.jsx';
+import { useDocumentTitle } from '../lib/branding.js';
 
 // Performans optimizasyonları:
 // - adaptiveStream: alıcı bant genişliğine/ekran boyutuna göre simulcast katmanı seçer
@@ -29,12 +31,11 @@ import { ChatPanel } from '../components/ChatPanel.jsx';
 import { ParticipantList } from '../components/ParticipantList.jsx';
 import { SettingsPanel } from '../components/SettingsPanel.jsx';
 import { LobbyWaiting } from '../components/LobbyWaiting.jsx';
-import { VerificationFlow, verificationKey } from '../components/VerificationFlow.jsx';
+import { MemberGate } from '../components/MemberGate.jsx';
 import { TopBar } from '../components/TopBar.jsx';
 import { Icon } from '../components/icons.jsx';
 import { MeetingStage } from '../components/MeetingStage.jsx';
-import { getActiveRecording } from '../lib/api.js';
-import { BrowserRecorder, isBrowserRecordingSupported } from '../lib/browserRecorder.js';
+import { getActiveRecording, startRecording, stopRecording } from '../lib/api.js';
 
 export function Room() {
   const { roomId } = useParams();
@@ -46,11 +47,11 @@ export function Room() {
   const [nameInput, setNameInput] = useState('');
   const [password, setPassword] = useState(() => sessionStorage.getItem(`zoomtr:pwd:${roomId}`) || '');
   const [pwInput, setPwInput] = useState('');
-  const [verificationId, setVerificationId] = useState(() => sessionStorage.getItem(verificationKey(roomId)));
   const [token, setToken] = useState(null);
   const [serverUrl, setServerUrl] = useState(null);
   const [isHost, setIsHost] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
+  useDocumentTitle(roomMeta?.name);
 
   const hostToken = sessionStorage.getItem(`zoomtr:host:${roomId}`) || null;
 
@@ -58,10 +59,10 @@ export function Room() {
     getRoom(roomId)
       .then((room) => {
         setRoomMeta(room);
-        // Host doğrudan girer; katılımcılar parola (varsa) → kimlik doğrulaması → bağlantı
+        // Host doğrudan girer; katılımcılar parola (varsa) → SMS ile üye girişi + onay → bağlantı
         if (hostToken) setStep(displayName ? 'connecting' : 'ask-name');
         else if (room.hasPassword && !password) setStep('ask-password');
-        else setStep(verificationId ? 'connecting' : 'verify');
+        else setStep('member');
       })
       .catch((e) => {
         setErrorMsg(e.message);
@@ -77,7 +78,6 @@ export function Room() {
       displayName,
       hostToken: hostToken || undefined,
       password: password || undefined,
-      verificationId: verificationId || undefined,
     })
       .then((res) => {
         if (cancelled) return;
@@ -86,10 +86,12 @@ export function Room() {
           setErrorMsg('Parola gerekli veya yanlış');
           return;
         }
-        if (res.needVerification) {
-          sessionStorage.removeItem(verificationKey(roomId));
-          setVerificationId(null);
-          setStep('verify');
+        if (res.needMember) {
+          setStep('member');
+          return;
+        }
+        if (res.locked || res.expired) {
+          setStep(res.expired ? 'expired' : 'locked');
           return;
         }
         if (res.lobby) {
@@ -98,6 +100,11 @@ export function Room() {
         }
         setToken(res.token);
         setServerUrl(res.url);
+        // Toplantı yöneticisi üye: sunucu host anahtarını verir; host kontrolleri bununla çalışır
+        if (res.hostToken) {
+          sessionStorage.setItem(`zoomtr:host:${roomId}`, res.hostToken);
+          sessionStorage.setItem('zoomtr:name', res.displayName);
+        }
         setIsHost(!!res.isHost);
         if (res.displayName) setDisplayName(res.displayName);
         setStep('connected');
@@ -107,7 +114,31 @@ export function Room() {
         setStep('error');
       });
     return () => { cancelled = true; };
-  }, [step, roomId, displayName, password, hostToken, verificationId]);
+  }, [step, roomId, displayName, password, hostToken]);
+
+  // Toplantı dışı durum ekranları: bitti / çıkarıldı / kilitli / link süresi doldu
+  if (step === 'locked' || step === 'expired' || step === 'ended' || step === 'removed') {
+    const info = {
+      locked: ['Toplantı şu an kapalı', 'Host bu toplantıyı yeni katılımlara kapattı. Toplantı sahibinden haber bekleyin.'],
+      expired: ['Linkin süresi doldu', 'Bu toplantı linki artık geçerli değil. Toplantı sahibinden yeni bir link isteyin.'],
+      ended: ['Toplantı sona erdi', 'Host toplantıyı herkes için bitirdi. Katıldığınız için teşekkürler.'],
+      removed: ['Toplantıdan çıkarıldınız', 'Host sizi bu toplantıdan çıkardı.'],
+    }[step];
+    return (
+      <>
+        <TopBar />
+        <div className="centered-screen auth-screen">
+          <div className="card auth-card">
+            <h1 className="auth-title">{info[0]}</h1>
+            <p className="auth-desc">{info[1]}</p>
+            <button className="btn primary full auth-cta" onClick={() => navigate(hostToken ? '/admin/toplantilar' : '/')}>
+              {hostToken ? 'Yönetim paneline dön' : 'Ana sayfaya dön'}
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   if (step === 'error') {
     return (
@@ -196,7 +227,7 @@ export function Room() {
                 sessionStorage.setItem(`zoomtr:pwd:${roomId}`, t);
                 setPassword(t);
                 setErrorMsg(null);
-                setStep(verificationId ? 'connecting' : 'verify');
+                setStep('member');
               }}
             >
               <Icon.Lock /> Gir
@@ -208,24 +239,13 @@ export function Room() {
     );
   }
 
-  if (step === 'verify') {
+  if (step === 'member') {
     return (
       <>
         <TopBar />
-        <VerificationFlow
-          roomId={roomId}
-          roomName={roomMeta?.name}
-          password={password}
-          onComplete={(vid) => {
-            setVerificationId(vid);
-            setStep('connecting');
-          }}
-          onPasswordRequired={() => {
-            sessionStorage.removeItem(`zoomtr:pwd:${roomId}`);
-            setPassword('');
-            setErrorMsg('Parola gerekli veya yanlış');
-            setStep('ask-password');
-          }}
+        <MemberGate
+          title={roomMeta?.name}
+          onApproved={() => setStep('connecting')}
         />
       </>
     );
@@ -237,7 +257,6 @@ export function Room() {
         <TopBar />
         <LobbyWaiting
           roomId={roomId}
-          verificationId={verificationId}
           password={password}
           onApproved={({ token, url, displayName: verifiedName }) => {
             setToken(token);
@@ -273,17 +292,24 @@ export function Room() {
       audio
       data-lk-theme="default"
       options={livekitOptions}
-      onDisconnected={() => navigate('/')}
+      onDisconnected={(reason) => {
+        // Host toplantıyı bitirdiyse ya da katılımcıyı çıkardıysa açıklama ekranı; kendi ayrıldıysa ana sayfa
+        if (reason === DisconnectReason.ROOM_DELETED) setStep('ended');
+        else if (reason === DisconnectReason.PARTICIPANT_REMOVED) setStep('removed');
+        else navigate(isHost ? '/admin/toplantilar' : '/');
+      }}
       style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
     >
-      <RoomLayout
-        roomId={roomId}
-        displayName={displayName}
-        roomName={roomMeta?.name}
-        isHost={isHost}
-        hostToken={hostToken}
-        onLeave={() => navigate('/')}
-      />
+      <ToastProvider>
+        <RoomLayout
+          roomId={roomId}
+          displayName={displayName}
+          roomName={roomMeta?.name}
+          isHost={isHost}
+          hostToken={hostToken}
+          onPromoted={() => setIsHost(true)}
+        />
+      </ToastProvider>
     </LiveKitRoom>
   );
 }
@@ -291,7 +317,7 @@ export function Room() {
 function CenteredCard({ title, subtitle }) {
   return (
     <div className="centered-screen">
-      <div className="card" style={{ textAlign: 'center' }}>
+      <div className="card status-card" style={{ textAlign: 'center' }}>
         <h2 className="card-title" style={{ marginBottom: subtitle ? 4 : 0 }}>{title}</h2>
         {subtitle && <p className="card-desc" style={{ marginBottom: 0 }}>{subtitle}</p>}
         <div className="spinner" />
@@ -300,16 +326,37 @@ function CenteredCard({ title, subtitle }) {
   );
 }
 
-function RoomLayout({ roomId, displayName, roomName, isHost, hostToken, onLeave }) {
+// Geniş masaüstünde sohbet paneli açık başlar; tablet ve telefonda video tüm alanı kaplar
+const PANEL_OPEN_BY_DEFAULT = '(min-width: 1200px)';
+
+const fullscreenSupported = typeof document !== 'undefined'
+  && !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+
+// Katılımcıya gösterilen ayar değişikliği bildirimleri (host kendi değişikliğini panelde görür)
+const SETTING_NOTICES = {
+  allowMic: ['Mikrofonunuzu yeniden açabilirsiniz', 'Host mikrofonları kapattı; şu an konuşamazsınız'],
+  allowCamera: ['Kameranızı yeniden açabilirsiniz', 'Host kameraları kapattı'],
+  hostOnlyVideo: ['Host katılımcı kameralarını kapattı; yalnız host görünüyor', 'Kameranızı yeniden açabilirsiniz'],
+  allowScreenShare: ['Artık ekran paylaşabilirsiniz', 'Host ekran paylaşımını kapattı'],
+  chatLocked: ['Host sohbeti kilitledi', 'Sohbet yeniden açıldı'],
+  allowReactions: ['Tepkiler yeniden açık', 'Host tepkileri kapattı'],
+};
+
+function RoomLayout({ roomId, displayName, roomName: initialRoomName, isHost, hostToken, onPromoted }) {
+  const toast = useToast();
+  const room = useRoomContext();
+  const [roomName, setRoomName] = useState(initialRoomName);
+  const settingsRef = useRef(null);
   const [tab, setTab] = useState('chat');
+  const participants = useParticipants();
+  const [unreadChat, setUnreadChat] = useState(0);
+  const chatVisibleRef = useRef(true);
   const [linkCopied, setLinkCopied] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(() => window.matchMedia(PANEL_OPEN_BY_DEFAULT).matches);
   const [recordingActive, setRecordingActive] = useState(false);
   const [recordingBusy, setRecordingBusy] = useState(false);
   const videoAreaRef = useRef(null);
-  const recorderRef = useRef(null);
-  const openedRecordings = useRef(new Set());
 
   // Kayıt durumu — başlangıçta API'den, sonra socket event'leriyle
   useEffect(() => {
@@ -322,14 +369,27 @@ function RoomLayout({ roomId, displayName, roomName, isHost, hostToken, onLeave 
     socket.on('connect', () => {
       socket.emit('room:join', { roomId, name: displayName });
     });
-    socket.on('recording:started', () => setRecordingActive(true));
-    socket.on('recording:stopped', () => setRecordingActive(false));
-    socket.on('recording:ready', ({ id, url }) => {
-      if (!isHost || !url) return;
-      if (id && openedRecordings.current.has(id)) return;
-      if (id) openedRecordings.current.add(id);
-      try { window.open(url, '_blank', 'noopener'); } catch { /* yoksay */ }
+    // Sohbet görünmüyorken gelen mesajlar sohbet düğmesinde rozet olarak sayılır
+    socket.on('chat:new', () => {
+      if (!chatVisibleRef.current) setUnreadChat((n) => n + 1);
     });
+    // Ayar değişiklikleri: ad güncellenir; katılımcıya yalnız gerçekten değişen ayar bildirilir
+    socket.on('room:settings', (next) => {
+      if (next.name) setRoomName(next.name);
+      const prev = settingsRef.current;
+      settingsRef.current = { ...prev, ...next };
+      if (isHost || !prev) return;
+      for (const [key, [onMsg, offMsg]] of Object.entries(SETTING_NOTICES)) {
+        if (key in next && next[key] !== prev[key]) toast(next[key] ? onMsg : offMsg);
+      }
+    });
+    getRoom(roomId).then((r) => { settingsRef.current = { ...r, ...settingsRef.current }; }).catch(() => {});
+    // Kayıt başlayınca herkese bildirilir (katılımcı kaydedildiğini bilmeli)
+    socket.on('recording:started', () => {
+      setRecordingActive(true);
+      if (!isHost) toast('Bu toplantı kaydediliyor');
+    });
+    socket.on('recording:stopped', () => setRecordingActive(false));
 
     return () => {
       cancelled = true;
@@ -337,72 +397,65 @@ function RoomLayout({ roomId, displayName, roomName, isHost, hostToken, onLeave 
     };
   }, [roomId, displayName, isHost]);
 
+  // Sunucu tarafı kayıt (LiveKit Egress): başlat/durdur; dosya Kayıtlar bölümünde listelenir
   async function toggleRecording() {
     if (recordingBusy) return;
-
-    // Aktif kayıt varsa durdur
-    if (recordingActive && recorderRef.current) {
-      setRecordingBusy(true);
-      recorderRef.current.stop();
-      // Onaylama recorder.onCompleted/onError'da
-      return;
-    }
-
-    if (!isBrowserRecordingSupported()) {
-      alert('Tarayıcınız ekran kaydını desteklemiyor (iOS Safari). Production ortamında server-side kayıt aktiftir.');
-      return;
-    }
-
     setRecordingBusy(true);
-    const recorder = new BrowserRecorder({
-      roomId,
-      hostToken,
-      onStarted: () => {
+    try {
+      if (recordingActive) {
+        await stopRecording(roomId, hostToken);
+        setRecordingActive(false);
+        toast('Kayıt durduruldu. Birkaç dakika içinde Kayıtlar bölümünde hazır olur.', { tone: 'success' });
+      } else {
+        await startRecording(roomId, hostToken);
         setRecordingActive(true);
-        setRecordingBusy(false);
-      },
-      onUploading: () => {
-        setRecordingBusy(true);
-      },
-      onCompleted: ({ id, url }) => {
-        setRecordingActive(false);
-        setRecordingBusy(false);
-        recorderRef.current = null;
-        if (id) openedRecordings.current.add(id); // dedupe socket dup
-        if (url) {
-          try { window.open(url, '_blank', 'noopener'); } catch { /* yoksay */ }
-        }
-      },
-      onError: (err) => {
-        setRecordingActive(false);
-        setRecordingBusy(false);
-        recorderRef.current = null;
-        alert(`Kayıt hatası: ${err?.message || err}`);
-      },
-    });
-    recorderRef.current = recorder;
-    const ok = await recorder.start();
-    if (!ok) {
-      // Start zaten onError tetikledi
-      recorderRef.current = null;
+        toast('Kayıt başladı', { tone: 'success' });
+      }
+    } catch (err) {
+      toast(err.message, { tone: 'warning' });
+    } finally {
+      setRecordingBusy(false);
     }
   }
 
-  // Sayfa kapatılırsa stream'leri serbest bırak
+  // Sunucudan gelen bildirimler (host mikrofonunuzu kapattı vb.) → toast
   useEffect(() => {
-    return () => {
-      if (recorderRef.current) {
-        try { recorderRef.current.stop(); } catch {}
-      }
+    if (!room) return;
+    const onData = (payload, participant, _kind, topic) => {
+      if (participant) return; // yalnız sunucudan gelenler
+      try {
+        const data = JSON.parse(new TextDecoder().decode(payload));
+        if (topic === 'notice') toast(data.message);
+        // Host bu katılımcıyı toplantı yöneticisi yaptı: host kontrolleri açılır
+        if (topic === 'promote' && data.hostToken) {
+          sessionStorage.setItem(`zoomtr:host:${roomId}`, data.hostToken);
+          onPromoted?.();
+        }
+      } catch { /* yoksay */ }
     };
-  }, []);
+    room.on(RoomEvent.DataReceived, onData);
+    return () => { room.off(RoomEvent.DataReceived, onData); };
+  }, [room, toast]);
+
+  const chatVisible = tab === 'chat' && panelOpen;
+  useEffect(() => {
+    chatVisibleRef.current = chatVisible;
+    if (chatVisible) setUnreadChat(0);
+  }, [chatVisible]);
 
   // Derslik açıkken sayfa viewport'a sabitlenir; belge scroll olmaz,
   // sadece sohbet/katılımcı/ayar listeleri kendi içinde kayar.
+  // Tarayıcı/durum çubuğu rengi de koyu video alanına uyar.
   useEffect(() => {
     const html = document.documentElement;
     html.classList.add('room-locked');
-    return () => html.classList.remove('room-locked');
+    const meta = document.querySelector('meta[name="theme-color"]');
+    const prevTheme = meta?.getAttribute('content');
+    meta?.setAttribute('content', '#09090b');
+    return () => {
+      html.classList.remove('room-locked');
+      if (meta && prevTheme) meta.setAttribute('content', prevTheme);
+    };
   }, []);
 
   function openPanel(targetTab) {
@@ -439,64 +492,63 @@ function RoomLayout({ roomId, displayName, roomName, isHost, hostToken, onLeave 
     }
   }
 
+  // Sohbet düğmesi: sohbet açıksa paneli kapatır, değilse sohbeti açar
+  function toggleChat() {
+    if (panelOpen && tab === 'chat') setPanelOpen(false);
+    else openPanel('chat');
+  }
+
+  // "Daha fazla" menüsündeki oda eylemleri
+  const moreActions = [
+    // Katılımcı listesi ve kişi sayısı yalnız hosta gösterilir
+    isHost && { key: 'people', label: 'Katılımcılar', icon: Icon.Users, onClick: () => openPanel('people') },
+    isHost && hostToken && { key: 'settings', label: 'Toplantı ayarları', icon: Icon.Settings, onClick: () => openPanel('settings') },
+    isHost && hostToken && {
+      key: 'record',
+      label: recordingActive ? 'Kaydı durdur' : 'Kaydı başlat',
+      icon: Icon.Record,
+      danger: recordingActive,
+      disabled: recordingBusy,
+      onClick: toggleRecording,
+    },
+    { key: 'link', label: linkCopied ? 'Kopyalandı' : 'Linki kopyala', icon: Icon.Copy, onClick: copyLink, keepOpen: true },
+    fullscreenSupported && {
+      key: 'fullscreen',
+      label: isFullscreen ? 'Tam ekrandan çık' : 'Tam ekran',
+      icon: isFullscreen ? Icon.Minimize : Icon.Maximize,
+      onClick: toggleFullscreen,
+    },
+  ].filter(Boolean);
+
   return (
-    <div className="room">
+    <div className={`room ${panelOpen ? 'panel-open' : ''}`}>
       <div className="video-area" ref={videoAreaRef}>
         <div className="room-banner">
           <span className="room-name">{roomName}</span>
-          <code>{roomId}</code>
-          {isHost && <span className="badge">HOST</span>}
-          {recordingActive && (
-            <span className="rec-badge" title="Bu oda kaydediliyor">
-              <span className="rec-dot" /> KAYIT
+          {isHost && <span className="room-code" title="Toplantı kodu">{roomId}</span>}
+          {isHost && (
+            <span className="room-count" title="Bağlı kişi sayısı">
+              <Icon.Users width="13" height="13" /> {participants.length}
             </span>
           )}
-          {isHost && hostToken && (
-            <button
-              type="button"
-              className={`btn sm ${recordingActive ? 'rec-btn active' : 'rec-btn'}`}
-              onClick={toggleRecording}
-              disabled={recordingBusy}
-              title={recordingActive ? 'Kaydı durdur' : 'Kaydı başlat'}
-            >
-              <span className={`rec-dot-mini ${recordingActive ? '' : 'off'}`} />
-              <span className="banner-label">
-                {recordingActive ? 'Kaydı durdur' : 'Kaydı başlat'}
-              </span>
-            </button>
+          {recordingActive && (
+            <span className="rec-badge" title="Bu toplantı kaydediliyor">
+              <span className="rec-dot" /> Kayıt
+            </span>
           )}
-          <button className="btn sm" onClick={copyLink}>
-            <Icon.Copy width="14" height="14" />
-            <span className="banner-label">{linkCopied ? 'Kopyalandı' : 'Linki kopyala'}</span>
-          </button>
-          <button className="btn sm" onClick={toggleFullscreen}>
-            {isFullscreen ? <Icon.Minimize width="14" height="14" /> : <Icon.Maximize width="14" height="14" />}
-            <span className="banner-label">{isFullscreen ? 'Tam ekrandan çık' : 'Tam ekran'}</span>
-          </button>
-          <span className="spacer" />
-          <button className="btn sm danger" onClick={onLeave}>
-            <Icon.Logout width="14" height="14" />
-            <span className="banner-label">Ayrıl</span>
-          </button>
+          {isHost && <span className="badge">Host</span>}
         </div>
         <MeetingStage
           roomId={roomId}
           displayName={displayName}
           isHost={isHost}
           hostToken={hostToken}
+          unreadChat={unreadChat}
+          chatOpen={panelOpen && tab === 'chat'}
+          onToggleChat={toggleChat}
+          moreActions={moreActions}
         />
       </div>
-
-      {!panelOpen && (
-        <button
-          type="button"
-          className="panel-fab"
-          onClick={() => openPanel('chat')}
-          aria-label="Yan paneli aç"
-        >
-          <Icon.Chat />
-        </button>
-      )}
 
       {panelOpen && (
         <div
@@ -516,19 +568,24 @@ function RoomLayout({ roomId, displayName, roomName, isHost, hostToken, onLeave 
         >
           <Icon.X />
         </button>
-        <div className="tabs">
-          <button className={tab === 'chat' ? 'active' : ''} onClick={() => setTab('chat')}>
-            <Icon.Chat width="14" height="14" /> Sohbet
-          </button>
-          <button className={tab === 'people' ? 'active' : ''} onClick={() => setTab('people')}>
-            <Icon.Users width="14" height="14" /> Katılımcılar
-          </button>
-          {isHost && hostToken && (
-            <button className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>
-              <Icon.Spark width="14" height="14" /> Ayarlar
+        {isHost ? (
+          <div className="tabs">
+            <button className={tab === 'chat' ? 'active' : ''} onClick={() => setTab('chat')}>
+              <Icon.Chat width="14" height="14" /> Sohbet
             </button>
-          )}
-        </div>
+            <button className={tab === 'people' ? 'active' : ''} onClick={() => setTab('people')}>
+              <Icon.Users width="14" height="14" /> Katılımcılar
+            </button>
+            {hostToken && (
+              <button className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>
+                <Icon.Settings width="14" height="14" /> Ayarlar
+              </button>
+            )}
+          </div>
+        ) : (
+          // Katılımcı yalnız sohbeti görür; sekme yerine başlık
+          <h2 className="side-title"><Icon.Chat width="16" height="16" /> Sohbet</h2>
+        )}
         {tab === 'chat' && (
           <ChatPanel
             roomId={roomId}
@@ -537,7 +594,7 @@ function RoomLayout({ roomId, displayName, roomName, isHost, hostToken, onLeave 
             hostToken={hostToken}
           />
         )}
-        {tab === 'people' && <ParticipantList isHost={isHost} roomId={roomId} hostToken={hostToken} />}
+        {tab === 'people' && isHost && <ParticipantList isHost={isHost} roomId={roomId} hostToken={hostToken} />}
         {tab === 'settings' && isHost && hostToken && (
           <SettingsPanel roomId={roomId} hostToken={hostToken} />
         )}

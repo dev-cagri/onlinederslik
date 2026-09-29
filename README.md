@@ -1,6 +1,6 @@
 # Online Derslik
 
-Eğitim odaklı, kendi sunucunuzda çalışan, açık kaynak video konferans uygulaması. Kayıt gerektirmez — adınızı girin, link oluşturun ve paylaşın.
+Eğitim odaklı, kendi sunucunuzda çalışan, açık kaynak video konferans uygulaması. Odaları yöneticiler açar; katılımcılar cep telefonlarına gelen SMS koduyla giriş yapar ve yönetici onayından sonra derslere katılır.
 
 
 ---
@@ -16,10 +16,14 @@ Eğitim odaklı, kendi sunucunuzda çalışan, açık kaynak video konferans uyg
 - DTX/RED ses optimizasyonu
 
 ### Katılım
-- Linkle, kayıt gerektirmeden katılım
+- **SMS ile giriş**: telefon numarası + 6 haneli kod (NETGSM); ilk girişte yalnızca ad-soyad istenir
+- **Üye onayı**: yeni üyeler yönetim panelinde listelenir, yönetici tek tıkla onaylar/reddeder (toplu onay var)
+- **Logo**: yönetim panelinde Ayarlar → Logo'dan yüklenir (PNG/JPG/WEBP, en fazla 2 MB); kenar çubuğu, katılımcı girişi ve ana sayfada görünür
+- **Giriş kodları**: yönetici panelden kod üretir (`XXXX-XXXX`, isteğe bağlı kullanım/süre sınırı); kodu giren katılımcı SMS ve onay beklemeden üye olur
+- Onaylı üye 30 gün boyunca tekrar kod girmeden derslere katılır; derste adı üyelikten gelir
+- Yoklama: her dersin hangi üyeler tarafından ne zaman açıldığı panelde görünür
 - Parola korumalı odalar
 - Bekleme odası (host her katılımcıyı tek tek onaylar)
-- Misafir mod, sadece ad-soyad
 
 ### Host Kontrolleri
 - Tüm mikrofonları sustur / tüm kameraları kapat
@@ -43,16 +47,25 @@ Eğitim odaklı, kendi sunucunuzda çalışan, açık kaynak video konferans uyg
 - Yeni gelenler de o anki paylaşımı görür
 - Aynı zamanda tek paylaşım, host değiştirebilir/durdurabilir
 
-### Kayıt
-- **Browser-side**: MediaRecorder + getDisplayMedia → WebM (VP9+Opus, ~6 MB/dakika)
-  - Local'de Docker olmadan çalışır
-  - Host'un sekmesi yakalanır
-- **Server-side** (production): LiveKit Egress → MP4 (H.264 800kbps + AAC 64kbps mono, 720p/24fps, ~6 MB/dakika)
-  - iPad host'lar için zorunlu (iOS Safari getDisplayMedia desteklemiyor)
-  - Docker container'da headless Chrome
-- Kayıt bitince otomatik indirme linki açılır
-- Kayıt geçmişi listesi (Ayarlar tab'ında)
-- Banner'da 🔴 KAYIT badge'i (nabız animasyonu)
+### Kayıt (sunucu tarafı)
+- LiveKit Egress, "konuşan kişi" düzeninde MP4 kaydeder: 720p · 15 fps · H.264 600 kbps · AAC 48 kbps → **~290 MB / saat**
+- Host ⋯ → "Kaydı başlat"; kayıt sürerken herkeste "Kayıt" rozeti, katılımcılara bildirim
+- Kayıtlar yönetim paneli → **Kayıtlar**'da: tarayıcıda izleme (Range destekli), indirme, silme, toplam alan
+- Kayıtlara yalnız yöneticiler erişir; toplantı silinse de kayıt kalır
+- Durum Egress'ten düzenli sorgulanır (doğrulamasız webhook ucu yok)
+
+### Yönetim paneli
+- **Üyeler**: onay / red / sil, toplu onay, "Toplantı yöneticisi" yetkisi
+- **Toplantılar**: link ömrü (1/7/30 gün, süresiz), durum etiketleri, silme, süresi dolanları temizleme, katılım listesi
+- **Giriş kodları**: SMS ve onay beklemeden üyelik (kullanım sınırı, geçerlilik)
+- **Kayıtlar**: sunucu kayıtları
+- **Ayarlar** (sekmeli): Genel (site adı, alt yazı, ana renk, logo) · Giriş (onay aç/kapat, SMS aç/kapat, NETGSM hesabı, test SMS'i) · Yöneticiler · Hesabım
+- Telefon ve tablette alt sekme çubuklu native düzen
+
+### Toplantı yöneticileri
+- Host toplantıda katılımcıyı **bu toplantıya** ya da **tüm toplantılara** yönetici atar; kişi anında host kontrollerini alır
+- Toplantı ayarları (host): katılımcı mikrofon/kamera/ekran/sohbet/tepki izinleri, yalnız host görünsün, bekleme odası, toplantıyı kilitle, ad değiştirme, herkes için bitirme
+- Toplu mikrofon/kamera kapatma hostu etkilemez; katılımcılara ekranda bildirim (toast) gider
 
 ### Tam Ekran & Görünüm
 - Tek tıkla tam ekran modu (sadece video alanı)
@@ -99,8 +112,7 @@ Eğitim odaklı, kendi sunucunuzda çalışan, açık kaynak video konferans uyg
 - **Chat**: socket `chat:send` → backend → DB insert → odaya broadcast
 - **Dosya paylaşımı**: multipart upload → `/uploads/...` → socket `share:show` broadcast → herkes overlay görür
 - **Zoom/pan sync**: host RAF ile `share:set-viewport` emit → backend doğrular → odaya `share:viewport` broadcast → herkes aynı transform uygular
-- **Kayıt (browser)**: MediaRecorder → Blob → `/api/rooms/:id/recordings/upload` → WebM file
-- **Kayıt (egress)**: `/api/rooms/:id/recordings/start` → LiveKit Egress polling → headless Chrome composite → MP4
+- **Kayıt**: `/api/rooms/:id/recordings/start` → LiveKit Egress (headless Chrome, konuşan kişi düzeni) → MP4; durum düzenli sorgulanır
 
 ---
 
@@ -249,20 +261,28 @@ location / {
 ### 7. SSL
 Let's Encrypt ile sertifika al, HTTPS'e zorla. WebSocket için `wss://` zorunlu.
 
-### 8. (Opsiyonel) Egress kayıt servisi
+### 8. Kayıt servisi (Redis + LiveKit Egress)
+Sunucu tarafı kayıt için LiveKit'in Redis'e bağlı olması ve Egress'in çalışması gerekir:
 ```bash
-docker compose up -d egress
+apt install redis-server docker.io
+# /etc/redis/redis.conf: bind 127.0.0.1, requirepass <şifre>
+# livekit.yaml:
+#   redis:
+#     address: 127.0.0.1:6379
+#     password: <şifre>
+chmod 1777 backend/recordings   # Egress konteyneri (uid 1001) buraya yazar
+docker run -d --name livekit-egress --restart unless-stopped --network host --cap-add SYS_ADMIN \
+  -e EGRESS_CONFIG_FILE=/etc/egress.yaml \
+  -v /etc/livekit/egress.yaml:/etc/egress.yaml:ro \
+  -v $PWD/backend/recordings:$PWD/backend/recordings \
+  livekit/egress:latest
 ```
+`egress.yaml`: `api_key`, `api_secret`, `ws_url: ws://127.0.0.1:7880`, `redis` (yukarıdaki şifreyle).
 
-`livekit.yaml`'a webhook ekle:
-```yaml
-webhook:
-  api_key: prodkey
-  urls:
-    - http://localhost:4000/api/livekit/webhook
-```
+aaPanel nginx'te genel `proxy_cache` açıksa `/api/` location'ına `proxy_cache off;` ekleyin; aksi hâlde kayıt videolarında ileri/geri sarma (Range) çalışmaz.
 
----
+### 9. Veritabanı güncellemeleri
+Mevcut kurulumu yükseltirken `backend/src/db/migrations/` altındaki dosyaları sırayla ve **bir kez** çalıştırın (001 → 007). Yeni kurulumda `schema.sql` yeterlidir. 002, eski TC/konum doğrulama tablolarını siler — öncesinde yedek alın.
 
 ## Konfigürasyon
 
@@ -346,6 +366,29 @@ online-derslik/
 
 ## REST API
 
+### Üye girişi (oturum `od_member` HttpOnly çerezinde)
+| Method | Path | Açıklama |
+|---|---|---|
+| `POST` | `/api/member/otp` | SMS giriş kodu gönder (`dialCode`, `phone`, KVKK onayı) |
+| `POST` | `/api/member/otp/verify` | Kodu doğrula; üye yoksa oluşturulur, oturum açılır |
+| `POST` | `/api/member/code-login` | Giriş koduyla üyelik (SMS ve onay yok) |
+| `POST` | `/api/member/register` | İlk girişte ad-soyad |
+| `GET` | `/api/member/me` | Oturumdaki üye (`status`: pending / approved / rejected) |
+| `POST` | `/api/member/logout` | Çıkış |
+
+### Yönetici — üyeler
+| Method | Path | Açıklama |
+|---|---|---|
+| `GET` | `/api/admin/members?status=pending` | Üye listesi + durum sayıları |
+| `POST` | `/api/admin/members/:id/status` | Onayla / reddet / beklemeye al |
+| `POST` | `/api/admin/members/approve-pending` | Bekleyenlerin hepsini onayla |
+| `DELETE` | `/api/admin/members/:id` | Üyeyi ve yoklama kayıtlarını sil |
+| `GET` | `/api/branding` | Site logosu (herkese açık; yoksa `null`) |
+| `POST` / `DELETE` | `/api/branding/logo` | Logo yükle (multipart `logo`) / varsayılana dön |
+| `GET` / `POST` | `/api/admin/access-codes` | Giriş kodlarını listele / oluştur |
+| `DELETE` | `/api/admin/access-codes/:id` | Kodu sil (kodla gelen üyeler kalır) |
+| `GET` | `/api/admin/rooms/:id/participants` | Odanın yoklaması |
+
 ### Oda
 | Method | Path | Açıklama |
 |---|---|---|
@@ -359,9 +402,6 @@ online-derslik/
 |---|---|---|
 | `POST` | `/api/rooms/:id/mute` | Tek katılımcının mic/cam mute/unmute |
 | `POST` | `/api/rooms/:id/mute-all` | Tüm mikrofon veya kamera kapat |
-| `POST` | `/api/rooms/:id/host-only-video` | "Sadece host görünür" toggle |
-| `POST` | `/api/rooms/:id/allow-screen-share` | Ekran paylaşım izni toggle |
-| `POST` | `/api/rooms/:id/lock-chat` | Sohbet kilidi toggle |
 | `POST` | `/api/rooms/:id/kick` | Katılımcıyı çıkar |
 
 ### Dosya paylaşımı
@@ -374,16 +414,25 @@ online-derslik/
 ### Kayıt
 | Method | Path | |
 |---|---|---|
-| `POST` | `/api/rooms/:id/recordings/announce-start` | Browser kaydı başladı broadcast |
-| `POST` | `/api/rooms/:id/recordings/upload` | Browser MediaRecorder Blob upload |
-| `POST` | `/api/rooms/:id/recordings/start` | Server-side Egress başlat |
-| `POST` | `/api/rooms/:id/recordings/stop` | Server-side Egress durdur |
-| `GET` | `/api/rooms/:id/recordings` | Tamamlanmış kayıtlar |
-| `GET` | `/api/rooms/:id/recordings/active` | Aktif kayıt |
-| `GET` | `/api/rooms/:id/recordings/:rid/download` | Dosyayı indir |
-| `POST` | `/api/livekit/webhook` | LiveKit Egress webhook hedefi |
+| `POST` | `/api/rooms/:id/recordings/start` | Sunucu kaydını başlat (hostToken) |
+| `POST` | `/api/rooms/:id/recordings/stop` | Kaydı durdur (hostToken) |
+| `GET` | `/api/rooms/:id/recordings/active` | Süren kayıt var mı |
+| `GET` | `/api/admin/recordings` | Tüm kayıtlar + toplam alan (yönetici) |
+| `GET` | `/api/admin/recordings/:id/file` | İzle (Range) / `?download=1` indir (yönetici) |
+| `DELETE` | `/api/admin/recordings/:id` | Kaydı sil (yönetici) |
 
----
+### Toplantı ayarları ve yöneticiler
+| Method | Path | |
+|---|---|---|
+| `POST` | `/api/rooms/:id/settings` | İzinler, kilit, bekleme odası, ad (hostToken) |
+| `POST` | `/api/rooms/:id/mute-all` | Host hariç herkesi sustur (hostToken) |
+| `POST` | `/api/rooms/:id/promote` | Katılımcıyı yönetici yap: `scope` = `room` / `all` (hostToken) |
+| `POST` | `/api/rooms/:id/end` | Toplantıyı herkes için bitir (hostToken) |
+| `POST` | `/api/admin/members/:id/host` | Üyeye tüm toplantılarda yönetici yetkisi ver/kaldır |
+| `GET` / `POST` | `/api/admin/settings` | Site ayarları (SMS, onay, NETGSM, görünüm) |
+| `POST` | `/api/admin/settings/sms-test` | Test SMS'i |
+| `GET` / `POST` / `DELETE` | `/api/admin/admins` | Yöneticiler |
+| `DELETE` | `/api/admin/rooms/:id` · `POST /api/admin/rooms/cleanup` | Toplantı silme / süresi dolanları temizleme |
 
 ## Socket.IO Events
 

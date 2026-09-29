@@ -34,11 +34,11 @@ export const config = {
       || '90,49,31,32,33,43,41,44,45,46,47,39,34,1,30,40,359,387,383,389,7,994,995,993,996,998,964,966,971,974')
       .split(',').map((c) => c.trim()).filter(Boolean),
   },
-  verification: {
-    // Tamamlanan doğrulama bu süre boyunca aynı odaya tekrar girişte geçerli
-    validHours: Number(process.env.VERIFICATION_VALID_HOURS) || 12,
-    // KVKK saklama süresi (gün): bu süreyi aşan doğrulama kayıtları otomatik silinir.
-    // Frontend'deki KVKK metni (lib/kvkk.js RETENTION_DAYS) ile aynı olmalı.
-    retentionDays: Number(process.env.VERIFICATION_RETENTION_DAYS) || 30,
+  members: {
+    // SMS ile giriş yapan üyenin oturum süresi (gün)
+    sessionDays: Number(process.env.MEMBER_SESSION_DAYS) || 30,
+    // KVKK saklama süresi (gün): bu süreyi aşan yoklama (derse giriş) kayıtları otomatik silinir.
+    // Frontend'deki KVKK metni (lib/kvkk.js ATTENDANCE_RETENTION_DAYS) ile aynı olmalı.
+    attendanceRetentionDays: Number(process.env.ATTENDANCE_RETENTION_DAYS) || 30,
   },
 };

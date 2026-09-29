@@ -2,12 +2,22 @@ import { nanoid } from 'nanoid';
 import { pool } from '../db/pool.js';
 import { issueToken } from '../lib/livekit.js';
 import { getCurrentShare } from '../routes/share.js';
-import { findCompletedVerification, markVerificationJoined } from '../lib/verification.js';
+import { getSessionMember } from '../lib/auth.js';
+import { memberJoinBlocker, memberDisplayName, recordAttendance } from '../lib/members.js';
 
-// pending[roomId] = Map<requestId, { name, socketId, verificationId }>
+// pending[roomId] = Map<requestId, { name, socketId, memberId, ip }>
 const pending = new Map();
 // hostsByRoom[roomId] = Set<socketId>
 const hostsByRoom = new Map();
+
+// Nginx aynı makinede (loopback) ise gerçek istemci IP'si X-Forwarded-For'dadır;
+// HTTP tarafındaki trust proxy = 'loopback' ayarıyla aynı mantık.
+function clientIp(socket) {
+  const { address, headers } = socket.handshake;
+  const isLoopback = /^(127\.|::1$|::ffff:127\.)/.test(address || '');
+  const forwarded = String(headers['x-forwarded-for'] || '').split(',').pop().trim();
+  return (isLoopback && forwarded) || address;
+}
 
 function pendingFor(roomId) {
   if (!pending.has(roomId)) pending.set(roomId, new Map());
@@ -22,12 +32,7 @@ function listPending(roomId) {
 }
 
 async function loadRoom(roomId) {
-  const [rows] = await pool.query(
-    `SELECT id, host_token, password, lobby_enabled,
-            host_only_video, allow_screen_share, chat_locked
-     FROM rooms WHERE id = ?`,
-    [roomId]
-  );
+  const [rows] = await pool.query('SELECT * FROM rooms WHERE id = ?', [roomId]);
   return rows[0] || null;
 }
 
@@ -65,25 +70,29 @@ export function attachLobby(socket, io) {
   });
 
   // Katılımcı lobby'ye düşer.
-  socket.on('lobby:request', async ({ roomId, password, verificationId }, ack) => {
+  socket.on('lobby:request', async ({ roomId, password }, ack) => {
     try {
       const room = await loadRoom(roomId);
       if (!room) return ack?.({ ok: false, error: 'not_found' });
       if (!room.lobby_enabled) return ack?.({ ok: false, error: 'no_lobby' });
+      if (room.room_locked) return ack?.({ ok: false, error: 'room_locked' });
+      if (room.expires_at && new Date(room.expires_at) < new Date()) return ack?.({ ok: false, error: 'room_locked' });
       if (room.password && password !== room.password) {
         return ack?.({ ok: false, error: 'password' });
       }
-      // Bekleme odasına da yalnız doğrulamasını tamamlamış katılımcı girer;
-      // host'a görünen ad doğrulanmış kimlikten gelir.
-      const verification = await findCompletedVerification(roomId, verificationId);
-      if (!verification) return ack?.({ ok: false, error: 'verification_required' });
-      const cleanName = verification.displayName.slice(0, 60);
+      // Bekleme odasına da yalnız onaylı üye girer (oturum çerezi handshake'te gelir);
+      // host'a görünen ad üyelikten gelir.
+      const member = await getSessionMember(socket.handshake.headers.cookie);
+      const blocker = memberJoinBlocker(member);
+      if (blocker) return ack?.({ ok: false, error: blocker });
+      const cleanName = memberDisplayName(member).slice(0, 60);
 
       const requestId = nanoid(12);
       pendingFor(roomId).set(requestId, {
         name: cleanName,
         socketId: socket.id,
-        verificationId: verification.id,
+        memberId: member.id,
+        ip: clientIp(socket),
       });
       socket.data.lobbyEntries.push({ roomId, requestId });
 
@@ -105,15 +114,9 @@ export function attachLobby(socket, io) {
       if (!entry) return ack?.({ ok: false, error: 'not_found' });
 
       const room = await loadRoom(roomId);
-      const { token, url } = await issueToken({
-        roomId,
-        displayName: entry.name,
-        isHost: false,
-        hostOnlyVideo: !!room?.host_only_video,
-        allowScreenShare: !!room?.allow_screen_share,
-      });
+      const { token, url } = await issueToken({ roomId, displayName: entry.name, isHost: false, room, memberId: entry.memberId });
       io.to(entry.socketId).emit('lobby:approved', { token, url, displayName: entry.name });
-      await markVerificationJoined(entry.verificationId);
+      await recordAttendance(roomId, entry.memberId, entry.ip);
       map.delete(requestId);
       io.to(`host:${roomId}`).emit('lobby:resolved', { requestId });
       ack?.({ ok: true });

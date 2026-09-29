@@ -1,4 +1,19 @@
 import { config } from '../config.js';
+import { getSetting, getSiteName, smsSafe } from './siteSettings.js';
+
+// NETGSM bilgileri yönetim panelinden (site_settings) gelir; panelde girilmemişse .env'deki değerler
+export async function getNetgsmConfig() {
+  const [usercode, password, msgheader] = await Promise.all(
+    ['netgsm_usercode', 'netgsm_password', 'netgsm_msgheader'].map(getSetting)
+  );
+  const env = config.sms.netgsm;
+  return {
+    usercode: usercode || env.usercode,
+    password: password || env.password,
+    msgheader: msgheader ?? env.msgheader,
+    fromPanel: !!(usercode || password),
+  };
+}
 
 // Yurt içi numaralar hızlı OTP kanalından, yurt dışı numaralar normal SMS kanalından gider
 // (OTP kanalı yalnız Türkiye operatörlerine gönderir; yurt dışında numaranın başına 00 eklenir).
@@ -26,8 +41,11 @@ if (config.sms.provider === 'console' && process.env.NODE_ENV === 'production') 
 
 // target: normalizePhone() çıktısı. Mesajda Türkçe karakter yok (160 karakter, tek parça).
 export async function sendOtpSms(target, code) {
-  const msg = `Online Derslik dogrulama kodunuz: ${code}. Bu kodu kimseyle paylasmayin.`;
+  const site = smsSafe(await getSiteName()).slice(0, 40);
+  return sendSms(target, `${site} dogrulama kodunuz: ${code}. Bu kodu kimseyle paylasmayin.`);
+}
 
+export async function sendSms(target, msg) {
   if (config.sms.provider === 'console') {
     console.log(`[SMS:console] ${target.phone} → ${msg}`);
     return;
@@ -36,7 +54,8 @@ export async function sendOtpSms(target, code) {
     throw new Error(`Bilinmeyen SMS_PROVIDER: ${config.sms.provider}`);
   }
 
-  const { usercode, password, msgheader } = config.sms.netgsm;
+  const { usercode, password, msgheader } = await getNetgsmConfig();
+  if (!usercode || !password) throw new Error('NETGSM bilgileri girilmemiş');
   const [url, body] = target.domestic
     ? [NETGSM_OTP_URL, { msgheader, msg, no: target.national }]
     // iysfilter 0: bilgilendirme mesajı (ticari ileti değil, İYS kontrolüne girmez)

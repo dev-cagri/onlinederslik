@@ -1,93 +1,99 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { adminMe } from '../lib/api.js';
-import { Icon } from '../components/icons.jsx';
+import { useNavigate } from 'react-router-dom';
+import { memberMe, memberLogout } from '../lib/api.js';
+import { useBranding, useDocumentTitle } from '../lib/branding.js';
 
-// Herkese açık giriş sayfası: yalnızca derse katılım. Oda açmak yönetim panelinde (/admin).
+const MEMBER_STATUS = {
+  approved: 'Toplantılara katılabilirsiniz',
+  pending: 'Üyeliğiniz yönetici onayı bekliyor',
+  rejected: 'Üyeliğiniz onaylanmadı',
+};
+
+const initials = (m) => `${m.firstName?.[0] || ''}${m.lastName?.[0] || ''}`.toLocaleUpperCase('tr-TR');
+
+// Herkese açık giriş sayfası: yalnızca toplantıya katılım. Toplantı açmak yönetim panelinde (/admin).
+// Giriş ekranlarıyla aynı iskelet: masaüstünde ortalı kart, mobilde tam sayfa (styles.css).
 export function Home() {
   const navigate = useNavigate();
   const [joinCode, setJoinCode] = useState('');
   const [error, setError] = useState(null);
-  const [admin, setAdmin] = useState(null);
+  const [member, setMember] = useState(null);
+  const { logoUrl, loaded, siteName, tagline } = useBranding();
+  useDocumentTitle();
 
   useEffect(() => {
-    adminMe().then(setAdmin).catch(() => {});
+    memberMe().then(setMember).catch(() => {});
   }, []);
+
+  async function logoutMember() {
+    await memberLogout().catch(() => {});
+    setMember(null);
+  }
 
   function handleJoin(e) {
     e.preventDefault();
     const code = joinCode.trim();
-    if (!code) return setError('Oda kodunu veya linkini girin');
+    if (!code) return setError('Toplantı kodunu ya da linkini girin.');
     const id = code.includes('/room/') ? code.split('/room/')[1].split(/[?#]/)[0] : code;
     navigate(`/room/${id}`);
   }
 
   return (
-    <>
-      <main className="home-main">
-        <div className="hero">
-          <div className="hero-form-side">
-            <span className="hero-eyebrow">Online Derslik</span>
-            <h1 className="hero-title">Online Eğitim Platformu</h1>
-            <p className="hero-subtitle">
-              Derse katılmak için öğretmeninizin paylaştığı linke tıklayın ya da oda kodunu
-              aşağıya girin. Girişte kimliğiniz SMS ile doğrulanır.
-            </p>
-
-            <div className="hero-pills">
-              <span className="pill">🔐 Kimlik doğrulamalı</span>
-              <span className="pill">📍 Yoklama</span>
-              <span className="pill">💬 Sohbet</span>
-              <span className="pill">🖥️ Ekran paylaşımı</span>
-            </div>
-
-            <div className="hero-flow">
-              <form className="auth-tab-body" onSubmit={handleJoin}>
-                <div className="field">
-                  <label className="field-label" htmlFor="join-code">Oda kodu veya link</label>
-                  <input
-                    id="join-code"
-                    className="input"
-                    value={joinCode}
-                    onChange={(e) => { setJoinCode(e.target.value); setError(null); }}
-                    placeholder="Örn. 1NUc3WBTyX veya tam link yapıştır"
-                    autoFocus
-                  />
-                </div>
-                <button type="submit" className="btn primary full lg">
-                  <Icon.Door /> Derse katıl
-                </button>
-              </form>
-
-              {error && <p className="error-text">{error}</p>}
-
-              <div className="home-admin-link">
-                {admin ? (
-                  <Link to="/admin" className="btn full">
-                    <Icon.Shield width="14" height="14" /> Yönetim paneline git ({admin.name})
-                  </Link>
-                ) : (
-                  <Link to="/admin/login">Yönetici girişi</Link>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="hero-visual-side">
-            <div className="hero-glow hero-glow-top" aria-hidden="true" />
-            <div className="hero-glow hero-glow-bottom" aria-hidden="true" />
-            <img src="/cyikon.png" alt="" className="hero-logo" />
-            <div className="hero-visual-caption">
-              <strong>Sınırsız · canlı</strong>
-              <span>Eğitim için optimize edilmiş video</span>
-            </div>
-          </div>
+    <div className="join-page">
+      {/* Marka paneli: site adı + hat sanatı çerçevelerini anımsatan geometrik desen */}
+      <aside className="join-brand">
+        <div className="join-brand-inner">
+          {/* Ayarlar yüklenmeden varsayılan ad bir an görünüp değişmesin */}
+          <p className="join-brand-name">{loaded ? siteName : '\u00a0'}</p>
+          <p className="join-brand-tag">{loaded ? tagline : '\u00a0'}</p>
         </div>
-      </main>
+      </aside>
 
-      <footer className="home-footer">
-        Çağrı Yılmaz tarafından <span aria-label="kalp" role="img">❤️</span> ile yapıldı.
-      </footer>
-    </>
+      <main className="join-main">
+        <div className="join-content">
+          {loaded && <img className="join-logo" src={logoUrl} alt="Logo" />}
+          <h1 className="join-title">Toplantıya katılın</h1>
+          <p className="join-desc">
+            Size gönderilen linke tıklayın ya da toplantı kodunu aşağıya yazın.
+          </p>
+
+          <form className="auth-form join-form" onSubmit={handleJoin}>
+            <div className="field">
+              <label className="field-label" htmlFor="join-code">Toplantı kodu ya da link</label>
+              <input
+                id="join-code"
+                className="input"
+                value={joinCode}
+                onChange={(e) => { setJoinCode(e.target.value); setError(null); }}
+                placeholder="Örn. 1NUc3WBTyX"
+                autoCapitalize="none"
+                autoCorrect="off"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+            <button type="submit" className="btn primary full auth-cta join-cta">
+              Toplantıya katıl
+            </button>
+          </form>
+          {error && <p className="error-text auth-error" role="alert">{error}</p>}
+
+          {member?.registered && (
+            <div className="join-member">
+              <span className={`avatar sm ${member.status}`}>{initials(member)}</span>
+              <div className="row-main">
+                <strong>{member.firstName} {member.lastName}</strong>
+                <span className="row-meta"><span>{MEMBER_STATUS[member.status]}</span></span>
+              </div>
+              <button type="button" className="btn ghost sm" onClick={logoutMember}>Çıkış yap</button>
+            </div>
+          )}
+        </div>
+
+        <footer className="join-footer">
+          <span>Çağrı Yılmaz tarafından <span aria-label="kalp" role="img">❤️</span> ile yapıldı</span>
+        </footer>
+      </main>
+    </div>
   );
 }

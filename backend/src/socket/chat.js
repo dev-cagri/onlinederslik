@@ -64,10 +64,13 @@ export function attachChat(socket, io) {
   });
 
   // Emoji tepkiler: küçük, store edilmez, anlık broadcast.
-  socket.on('reaction:send', ({ emoji }) => {
+  socket.on('reaction:send', async ({ emoji, hostToken }) => {
     if (!joinedRoom || !displayName) return;
     const safe = (emoji || '').toString().slice(0, 16);
     if (!safe) return;
+    // Host tepkileri kapattıysa yalnız host gönderebilir
+    const [[room]] = await pool.query('SELECT allow_reactions, host_token FROM rooms WHERE id = ?', [joinedRoom]);
+    if (room && !room.allow_reactions && !(hostToken && hostToken === room.host_token)) return;
     io.to(joinedRoom).emit('reaction:new', {
       id: Math.random().toString(36).slice(2, 10),
       emoji: safe,

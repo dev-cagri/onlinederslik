@@ -6,12 +6,14 @@ import {
   TrackToggle,
   DisconnectButton,
   useTracks,
+  useTrackToggle,
   useRoomContext,
 } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import { io } from 'socket.io-client';
 import { Icon } from './icons.jsx';
 import { SharedContent } from './SharedContent.jsx';
+import { useToast } from './Toasts.jsx';
 import { getRoom, uploadShare, clearShare } from '../lib/api.js';
 
 const screenShareSupported =
@@ -19,7 +21,12 @@ const screenShareSupported =
   navigator.mediaDevices &&
   typeof navigator.mediaDevices.getDisplayMedia === 'function';
 
-export function MeetingStage({ roomId, displayName, isHost, hostToken }) {
+// moreActions: RoomLayout'tan gelen oda eylemleri (kayıt, link, katılımcılar…);
+// "Daha fazla" menüsünde tepkiler ve dosya paylaşımıyla birlikte listelenir.
+export function MeetingStage({
+  roomId, displayName, isHost, hostToken,
+  unreadChat = 0, chatOpen = false, onToggleChat, moreActions = [],
+}) {
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -32,9 +39,13 @@ export function MeetingStage({ roomId, displayName, isHost, hostToken }) {
   const [viewport, setViewport] = useState({ zoom: 1, panX: 0, panY: 0 });
   const [allowScreenShare, setAllowScreenShare] = useState(false);
   const [hostOnlyVideo, setHostOnlyVideo] = useState(false);
+  const [allowMic, setAllowMic] = useState(true);
+  const [allowCamera, setAllowCamera] = useState(true);
+  const [allowReactions, setAllowReactions] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [reactions, setReactions] = useState([]);
+  const [moreOpen, setMoreOpen] = useState(false);
   const fileInputRef = useRef(null);
   const socketRef = useRef(null);
   const viewportEmitRaf = useRef(null);
@@ -59,6 +70,9 @@ export function MeetingStage({ roomId, displayName, isHost, hostToken }) {
       if (cancelled) return;
       setAllowScreenShare(!!r.allowScreenShare);
       setHostOnlyVideo(!!r.hostOnlyVideo);
+      setAllowMic(r.allowMic !== false);
+      setAllowCamera(r.allowCamera !== false);
+      setAllowReactions(r.allowReactions !== false);
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [roomId]);
@@ -83,6 +97,9 @@ export function MeetingStage({ roomId, displayName, isHost, hostToken }) {
     socket.on('room:settings', (s) => {
       if ('allowScreenShare' in s) setAllowScreenShare(!!s.allowScreenShare);
       if ('hostOnlyVideo' in s) setHostOnlyVideo(!!s.hostOnlyVideo);
+      if ('allowMic' in s) setAllowMic(!!s.allowMic);
+      if ('allowCamera' in s) setAllowCamera(!!s.allowCamera);
+      if ('allowReactions' in s) setAllowReactions(!!s.allowReactions);
     });
     socket.on('reaction:new', (r) => {
       // Random pozisyon kayması — birden fazla tepki üst üste binmesin
@@ -120,7 +137,7 @@ export function MeetingStage({ roomId, displayName, isHost, hostToken }) {
   }
 
   function sendReaction(emoji) {
-    socketRef.current?.emit('reaction:send', { emoji });
+    socketRef.current?.emit('reaction:send', { emoji, hostToken });
   }
 
   // Host'un viewport değişikliklerini optimistik olarak uygula + socket'e raf ile gönder
@@ -137,6 +154,9 @@ export function MeetingStage({ roomId, displayName, isHost, hostToken }) {
   }
 
   const canScreenShare = isHost || allowScreenShare;
+  // Host'un kapattığı kaynaklar: düğme kilitli görünür, dokununca açıklama çıkar
+  const micLocked = !isHost && !allowMic;
+  const camLocked = !isHost && (!allowCamera || hostOnlyVideo);
 
   return (
     <>
@@ -172,15 +192,33 @@ export function MeetingStage({ roomId, displayName, isHost, hostToken }) {
       </div>
 
       <MeetingControls
-        isHost={isHost}
         canScreenShare={canScreenShare}
-        share={share}
-        uploading={uploading}
-        uploadProgress={uploadProgress}
-        onPickFile={() => fileInputRef.current?.click()}
-        onStopShare={handleStopShare}
-        onSendReaction={sendReaction}
+        micLocked={micLocked}
+        camLocked={camLocked}
+        unreadChat={unreadChat}
+        chatOpen={chatOpen}
+        onToggleChat={onToggleChat}
+        moreOpen={moreOpen}
+        onOpenMore={() => setMoreOpen(true)}
       />
+      {moreOpen && (
+        <MoreSheet
+          onClose={() => setMoreOpen(false)}
+          onSendReaction={isHost || allowReactions ? sendReaction : null}
+          actions={[
+            ...(isHost ? [share
+              ? { key: 'stop-share', label: 'Paylaşımı durdur', icon: Icon.X, danger: true, onClick: handleStopShare }
+              : {
+                key: 'share',
+                label: uploading ? `Yükleniyor %${Math.round(uploadProgress * 100)}` : 'Dosya paylaş',
+                icon: Icon.Image,
+                disabled: uploading,
+                onClick: () => fileInputRef.current?.click(),
+              }] : []),
+            ...moreActions,
+          ]}
+        />
+      )}
       <input
         ref={fileInputRef}
         type="file"
@@ -220,101 +258,120 @@ function StartAudioButton() {
 
 const REACTION_EMOJIS = ['👍', '❤️', '👏', '🎉', '😂', '😮', '❓', '✋'];
 
-function ReactionPicker({ onSend }) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef(null);
-
-  // Dışına tıklanınca kapan
-  useEffect(() => {
-    if (!open) return;
-    function onDoc(e) {
-      if (!containerRef.current?.contains(e.target)) setOpen(false);
-    }
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('touchstart', onDoc);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('touchstart', onDoc);
-    };
-  }, [open]);
-
+// Açıkken koyu (yarı saydam), kapalıyken beyaz zemin + üstü çizili ikon (iOS arama ekranı gibi)
+function MediaToggle({ source, label, OnIcon, OffIcon, locked, lockedMessage }) {
+  const { buttonProps, enabled } = useTrackToggle({ source });
+  const toast = useToast();
+  if (locked && !enabled) {
+    return (
+      <button
+        type="button"
+        className="ctl ctl-media off locked"
+        aria-label={`${label} (host kapattı)`}
+        title={lockedMessage}
+        onClick={() => toast(lockedMessage)}
+      >
+        <OffIcon />
+        <span className="ctl-lock" aria-hidden="true"><Icon.Lock width="10" height="10" /></span>
+      </button>
+    );
+  }
   return (
-    <div className="reaction-picker" ref={containerRef}>
+    <button {...buttonProps} className={`ctl ctl-media ${enabled ? '' : 'off'}`} aria-label={label} title={label}>
+      {enabled ? <OnIcon /> : <OffIcon />}
+      <span className="ctl-label">{label}</span>
+    </button>
+  );
+}
+
+// Alt kontrol çubuğu (tüm ekran boyutlarında aynı): yuvarlak düğmeler, ikincil
+// eylemler "Daha fazla" menüsünde. Etiketler ekran okuyucu ve ipucu (title) için.
+function MeetingControls({ canScreenShare, micLocked, camLocked, unreadChat, chatOpen, onToggleChat, moreOpen, onOpenMore }) {
+  return (
+    <div className="meeting-controls">
+      <MediaToggle
+        source={Track.Source.Microphone} label="Mikrofon" OnIcon={Icon.Mic} OffIcon={Icon.MicOff}
+        locked={micLocked} lockedMessage="Host mikrofonları kapattı; şu an açamazsınız"
+      />
+      <MediaToggle
+        source={Track.Source.Camera} label="Kamera" OnIcon={Icon.Video} OffIcon={Icon.VideoOff}
+        locked={camLocked} lockedMessage="Host kameraları kapattı; şu an açamazsınız"
+      />
+      {canScreenShare && screenShareSupported && (
+        <TrackToggle source={Track.Source.ScreenShare} showIcon={false} className="ctl" title="Ekran paylaş" aria-label="Ekran paylaş">
+          <Icon.Screen />
+          <span className="ctl-label">Ekran paylaş</span>
+        </TrackToggle>
+      )}
       <button
         type="button"
         className="ctl"
-        onClick={() => setOpen((v) => !v)}
-        aria-label="Tepki gönder"
+        onClick={onToggleChat}
+        aria-pressed={chatOpen}
+        aria-label="Sohbet"
+        title="Sohbet"
       >
-        <Icon.Smile />
-        <span className="ctl-label">Tepki</span>
+        <Icon.Chat />
+        {unreadChat > 0 && <span className="ctl-badge">{unreadChat > 9 ? '9+' : unreadChat}</span>}
       </button>
-      {open && (
-        <div className="reaction-popover" role="menu">
-          {REACTION_EMOJIS.map((e) => (
-            <button
-              key={e}
-              type="button"
-              className="reaction-emoji-btn"
-              onClick={() => { onSend(e); setOpen(false); }}
-              aria-label={`Tepki: ${e}`}
-            >
-              {e}
-            </button>
-          ))}
-        </div>
-      )}
+      <button
+        type="button"
+        className="ctl"
+        onClick={onOpenMore}
+        aria-pressed={moreOpen}
+        aria-haspopup="dialog"
+        aria-label="Daha fazla"
+        title="Daha fazla"
+      >
+        <Icon.More />
+      </button>
+      <StartAudioButton />
+      <DisconnectButton className="ctl ctl-danger ctl-leave" aria-label="Toplantıdan ayrıl" title="Toplantıdan ayrıl">
+        <Icon.Logout />
+        <span className="ctl-label">Ayrıl</span>
+      </DisconnectButton>
     </div>
   );
 }
 
-function MeetingControls({
-  isHost,
-  canScreenShare,
-  share,
-  uploading,
-  uploadProgress,
-  onPickFile,
-  onStopShare,
-  onSendReaction,
-}) {
+// "Daha fazla": üstte tepki emojileri, altta eylem kutuları. Telefonda alttan açılan
+// sayfa, geniş ekranda kontrol çubuğunun üstünde yüzen kart.
+function MoreSheet({ onClose, onSendReaction, actions }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return (
-    <div className="meeting-controls">
-      <TrackToggle source={Track.Source.Microphone} showIcon={false} className="ctl">
-        <Icon.Mic />
-        <span className="ctl-label">Mikrofon</span>
-      </TrackToggle>
-      <TrackToggle source={Track.Source.Camera} showIcon={false} className="ctl">
-        <Icon.Video />
-        <span className="ctl-label">Kamera</span>
-      </TrackToggle>
-      {canScreenShare && screenShareSupported && (
-        <TrackToggle source={Track.Source.ScreenShare} showIcon={false} className="ctl">
-          <Icon.Spark />
-          <span className="ctl-label">Ekran paylaş</span>
-        </TrackToggle>
-      )}
-      <ReactionPicker onSend={onSendReaction} />
-      {isHost && (
-        share ? (
-          <button type="button" className="ctl ctl-danger" onClick={onStopShare}>
-            <Icon.X />
-            <span className="ctl-label">Paylaşımı durdur</span>
-          </button>
-        ) : (
-          <button type="button" className="ctl" onClick={onPickFile} disabled={uploading}>
-            <Icon.Image />
-            <span className="ctl-label">
-              {uploading ? `Yükleniyor… ${Math.round(uploadProgress * 100)}%` : 'Dosya paylaş'}
-            </span>
-          </button>
-        )
-      )}
-      <StartAudioButton />
-      <DisconnectButton className="ctl ctl-danger">
-        <Icon.Logout />
-        <span className="ctl-label">Ayrıl</span>
-      </DisconnectButton>
+    <div className="more-backdrop" onClick={onClose}>
+      <div className="more-sheet" role="dialog" aria-modal="true" aria-label="Daha fazla" onClick={(e) => e.stopPropagation()}>
+        <div className="more-grabber" aria-hidden="true" />
+        {onSendReaction && (
+          <div className="more-reactions" role="group" aria-label="Tepki gönder">
+            {REACTION_EMOJIS.map((e) => (
+              <button key={e} type="button" onClick={() => { onSendReaction(e); onClose(); }} aria-label={`Tepki: ${e}`}>
+                {e}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="more-actions">
+          {actions.map((a) => (
+            <button
+              key={a.key}
+              type="button"
+              className={a.danger ? 'danger' : a.active ? 'active' : ''}
+              disabled={a.disabled}
+              onClick={() => { a.onClick(); if (!a.keepOpen) onClose(); }}
+            >
+              <span className="more-icon"><a.icon width="22" height="22" /></span>
+              <span className="more-label">{a.label}</span>
+            </button>
+          ))}
+        </div>
+        <button type="button" className="more-close" onClick={onClose}>Kapat</button>
+      </div>
     </div>
   );
 }

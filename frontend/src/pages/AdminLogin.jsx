@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TopBar } from '../components/TopBar.jsx';
-import { Icon } from '../components/icons.jsx';
+import { useBranding, useDocumentTitle } from '../lib/branding.js';
 import { adminLogin, adminMe } from '../lib/api.js';
 
 export function AdminLogin() {
@@ -10,6 +9,8 @@ export function AdminLogin() {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const { logoUrl, loaded } = useBranding();
+  useDocumentTitle('Yönetici girişi');
 
   // Zaten giriş yapılmışsa doğrudan panele
   useEffect(() => {
@@ -32,12 +33,14 @@ export function AdminLogin() {
   }
 
   return (
-    <>
-      <TopBar />
-      <div className="centered-screen">
-        <form className="card" onSubmit={handleSubmit}>
-          <h2 className="card-title">Yönetici girişi</h2>
-          <p className="card-desc">Ders odalarını yalnızca yöneticiler oluşturabilir.</p>
+    <div className="centered-screen auth-screen">
+      <form className="card auth-card" onSubmit={handleSubmit}>
+        <div className="auth-nav">
+          {loaded && <img className="auth-logo" src={logoUrl} alt="Logo" />}
+        </div>
+        <h1 className="auth-title">Yönetim paneli</h1>
+        <p className="auth-desc">Toplantıları ve üyeleri yönetmek için giriş yapın.</p>
+        <div className="auth-form">
           <div className="field">
             <label className="field-label" htmlFor="admin-email">E-posta</label>
             <input
@@ -63,12 +66,12 @@ export function AdminLogin() {
               required
             />
           </div>
-          <button type="submit" className="btn primary full" disabled={busy}>
-            <Icon.Lock /> {busy ? 'Giriş yapılıyor…' : 'Giriş yap'}
+          <button type="submit" className="btn primary full auth-cta" disabled={busy}>
+            {busy ? 'Giriş yapılıyor…' : 'Giriş yap'}
           </button>
-          {error && <p className="error-text" role="alert">{error}</p>}
-        </form>
-      </div>
-    </>
+        </div>
+        {error && <p className="error-text auth-error" role="alert">{error}</p>}
+      </form>
+    </div>
   );
 }
